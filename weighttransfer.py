@@ -53,6 +53,10 @@ import numpy as np
 import scipy as sp
 import robust_laplacian
 
+# libigl 2.6+ (nanobind bindings) renamed/changed several functions.
+# 2.5.1 has no wheels for Python >= 3.12 (Blender 5.x), so both APIs are supported.
+IGL_LEGACY = hasattr(igl, "barycentric_coordinates_tri")
+
 
 def find_closest_point_on_surface(P, V, F):
     """
@@ -69,6 +73,12 @@ def find_closest_point_on_surface(P, V, F):
         B #P by 3 of the barycentric coordinates of the closest point
     """
     
+    if not IGL_LEGACY:
+        # nanobind bindings only accept float64 / int64
+        P = np.ascontiguousarray(P, dtype=np.float64)
+        V = np.ascontiguousarray(V, dtype=np.float64)
+        F = np.ascontiguousarray(F, dtype=np.int64)
+
     sqrD,I,C = igl.point_mesh_squared_distance(P, V, F)
 
     F_closest = F[I,:]
@@ -76,7 +86,10 @@ def find_closest_point_on_surface(P, V, F):
     V2 = V[F_closest[:,1],:]
     V3 = V[F_closest[:,2],:]
 
-    B = igl.barycentric_coordinates_tri(C, V1, V2, V3)
+    if IGL_LEGACY:
+        B = igl.barycentric_coordinates_tri(C, V1, V2, V3)
+    else:
+        B = igl.barycentric_coordinates(C, V1, V2, V3)
 
     return sqrD,I,C,B
 
@@ -190,14 +203,26 @@ def inpaint(V2, F2, W2, Matched, point_cloud):
     Q2 = -L + L*Minv*L
     Q2 = Q2.astype(np.float64)
 
-    Aeq = sp.sparse.csc_matrix((0, 0), dtype=np.float64)
-    Beq = np.array([], dtype=np.float64)
     B = np.zeros(shape = (L.shape[0], W2.shape[1]), dtype=np.float64)
 
     b = np.array(range(0, int(V2.shape[0])), dtype=np.int64)
     b = b[Matched]
     bc = W2[Matched,:].astype(np.float64)
-    result, W_inpainted = igl.min_quad_with_fixed(Q2, B, b, bc, Aeq, Beq, True)
+    if IGL_LEGACY:
+        Aeq = sp.sparse.csc_matrix((0, 0), dtype=np.float64)
+        Beq = np.array([], dtype=np.float64)
+        result, W_inpainted = igl.min_quad_with_fixed(Q2, B, b, bc, Aeq, Beq, True)
+    else:
+        # 2.6+ returns only the solution and raises on failure instead of returning a flag
+        Aeq = sp.sparse.csc_matrix((0, L.shape[0]), dtype=np.float64)
+        Beq = np.zeros((0, W2.shape[1]), dtype=np.float64)
+        try:
+            W_inpainted = igl.min_quad_with_fixed(sp.sparse.csc_matrix(Q2), B, b, bc, Aeq, Beq, True)
+            # min_quad_with_fixed doesn't fail without any matches, and unconstrained parts can produce NaN
+            result = bool(np.any(Matched)) and bool(np.all(np.isfinite(W_inpainted)))
+        except Exception as e:
+            print(e)
+            result, W_inpainted = False, np.zeros_like(W2)
     W_inpainted = W_inpainted.astype(np.float32)
     # when W2 shape = (num_verts, 1), it gets flattened to (num_verts, )
     # reshape it back to initial shape, limit_mask expects 2d array

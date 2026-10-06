@@ -47,13 +47,15 @@ user_site = sysconfig.get_paths(scheme, vars={"userbase": libs_path})["purelib"]
 site.addsitedir(user_site)
 
 DEPENDENCIES = ["robust_laplacian", "igl", "scipy"]
+# libigl 2.5.1 has no wheels for Python >= 3.12 (Blender 5.x), 2.6.x only has abi3 wheels for Python >= 3.12
+LIBIGL_REQUIREMENT = "libigl==2.5.1" if sys.version_info < (3, 12) else "libigl==2.6.1"
 missing_deps = []
 for module in DEPENDENCIES:
     try:
         importlib.import_module(module)
     except ImportError:
         if module == "igl":
-            missing_deps.append("libigl==2.5.1")
+            missing_deps.append(LIBIGL_REQUIREMENT)
         else:
             missing_deps.append(module)
 
