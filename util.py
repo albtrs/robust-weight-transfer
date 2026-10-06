@@ -83,12 +83,21 @@ def draw_debug_vertex_colors(obj, matched):
     mesh: bpy.types.Mesh = obj.data
     if not isinstance(mesh, bpy.types.Mesh): return
 
-    if "RBT Matched" in mesh.vertex_colors:
-        color_layer = mesh.vertex_colors["RBT Matched"]
-    else:
-        color_layer = mesh.vertex_colors.new(name="RBT Matched")
+    # Mesh.vertex_colors is deprecated since 3.2, use color attributes when available
+    use_attributes = hasattr(mesh, "color_attributes")
+    layers = mesh.color_attributes if use_attributes else mesh.vertex_colors
+    color_layer = layers.get("RBT Matched")
+    if color_layer and use_attributes and (color_layer.domain != 'CORNER' or color_layer.data_type != 'BYTE_COLOR'):
+        layers.remove(color_layer)
+        color_layer = None
+    if not color_layer:
+        if use_attributes:
+            color_layer = layers.new(name="RBT Matched", type='BYTE_COLOR', domain='CORNER')
+        else:
+            color_layer = layers.new(name="RBT Matched")
     if not color_layer: return False
-    color_layer.active = True
+    if not use_attributes:
+        color_layer.active = True
     loop_ind = np.zeros(len(mesh.loops), dtype=np.int64)
     mesh.loops.foreach_get('vertex_index', loop_ind)
     loop_matched = matched[loop_ind]
@@ -96,7 +105,10 @@ def draw_debug_vertex_colors(obj, matched):
     color_data[~loop_matched] = [234/255, 0, 255/255, 1.0]
     color_layer.data.foreach_set("color", color_data.reshape(-1))
     mesh.update()
-    mesh.vertex_colors.active = color_layer
+    if use_attributes:
+        layers.active_color = color_layer
+    else:
+        layers.active = color_layer
     return True
     
     
